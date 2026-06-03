@@ -1,19 +1,22 @@
-# syntax=docker/dockerfile:1.20
+# syntax=docker/dockerfile:1
 FROM node:lts-trixie-slim AS base
+
 ARG USER_UID=1000
 ARG USER_GID=1000
+
 RUN apt-get update \
   && apt-get install -y --no-install-recommends ca-certificates gosu curl gh git wget ripgrep python3 \
   && rm -rf /var/lib/apt/lists/* \
   && corepack enable
 
-# Modify the existing node user/group to have the specified UID/GID to match host user
 RUN usermod -u $USER_UID --non-unique node \
   && groupmod -g $USER_GID --non-unique node \
   && usermod -g $USER_GID -d /paperclip node
 
 FROM base AS deps
+
 WORKDIR /app
+
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml .npmrc ./
 COPY cli/package.json cli/
 COPY server/package.json server/
@@ -34,7 +37,10 @@ COPY packages/adapters/openclaw-gateway/package.json packages/adapters/openclaw-
 COPY packages/adapters/opencode-local/package.json packages/adapters/opencode-local/
 COPY packages/adapters/pi-local/package.json packages/adapters/pi-local/
 COPY packages/plugins/sdk/package.json packages/plugins/sdk/
-COPY --parents packages/plugins/sandbox-providers/./*/package.json packages/plugins/sandbox-providers/
+
+# DigitalOcean-safe replacement for COPY --parents
+COPY packages/plugins/sandbox-providers/ packages/plugins/sandbox-providers/
+
 COPY packages/plugins/paperclip-plugin-fake-sandbox/package.json packages/plugins/paperclip-plugin-fake-sandbox/
 COPY packages/plugins/plugin-llm-wiki/package.json packages/plugins/plugin-llm-wiki/
 COPY packages/plugins/plugin-workspace-diff/package.json packages/plugins/plugin-workspace-diff/
@@ -44,19 +50,26 @@ COPY scripts/link-plugin-dev-sdk.mjs scripts/
 RUN pnpm install --frozen-lockfile
 
 FROM base AS build
+
 WORKDIR /app
+
 COPY --from=deps /app /app
 COPY . .
+
 RUN pnpm --filter @paperclipai/ui build
 RUN pnpm --filter @paperclipai/plugin-sdk build
 RUN pnpm --filter @paperclipai/server build
 RUN test -f server/dist/index.js || (echo "ERROR: server build output missing" && exit 1)
 
 FROM base AS production
+
 ARG USER_UID=1000
 ARG USER_GID=1000
+
 WORKDIR /app
+
 COPY --chown=node:node --from=build /app /app
+
 RUN npm install --global --omit=dev @anthropic-ai/claude-code@latest @openai/codex@latest opencode-ai \
   && apt-get update \
   && apt-get install -y --no-install-recommends openssh-client jq \
@@ -65,6 +78,7 @@ RUN npm install --global --omit=dev @anthropic-ai/claude-code@latest @openai/cod
   && chown node:node /paperclip
 
 COPY scripts/docker-entrypoint.sh /usr/local/bin/
+
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
 ENV NODE_ENV=production \
@@ -82,7 +96,9 @@ ENV NODE_ENV=production \
   OPENCODE_ALLOW_ALL_MODELS=true
 
 VOLUME ["/paperclip"]
+
 EXPOSE 3100
 
 ENTRYPOINT ["docker-entrypoint.sh"]
+
 CMD ["node", "--import", "./server/node_modules/tsx/dist/loader.mjs", "server/dist/index.js"]
